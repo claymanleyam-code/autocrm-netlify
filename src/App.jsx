@@ -8,7 +8,7 @@ import GmailAccountTab from './components/GmailAccountTab.jsx';
 import Settings from './components/Settings.jsx';
 import LeadsTable from './components/LeadsTable.jsx';
 import { mapHeaders } from './utils/sheetMapping.js';
-import { mockHeaderRow, mockRows, defaultTemplate } from './utils/mockLeads.js';
+import { mockHeaderRow, mockRows, defaultTemplate } from './tils/mockLeads.js';
 
 const STORAGE_KEY = 'autocrm-state-v1';
 
@@ -92,7 +92,7 @@ export default function App() {
                 {tab === 'Attachments' && <AttachmentsTab state={state} setState={setState} />}
                 {tab === 'Gmail Account' && <GmailAccountTab state={state} setState={setState} />}
                 {tab === 'Settings' && <Settings state={state} setState={setState} />}
-              </main>main>
-        </div>div>
+              </main>
+        </div>
       );
 }</></div>
