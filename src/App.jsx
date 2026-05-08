@@ -77,7 +77,7 @@ export default function App() {
                 {tab === 'Dashboard' && <Dashboard state={state} setState={setState} />}
                 {tab === 'Leads' && (
                     <>
-                                <h2>Leads</h2>h2>
+                                <h2>Leads</h2>
                                 <LeadsTable
                                                 rows={state.rows}
                                                 headerMap={state.headerMap}
@@ -85,7 +85,7 @@ export default function App() {
                                                 onToggle={() => {}}
                                                 onToggleAll={() => {}}
                                               />
-                    </>>
+                    </>
                   )}
                 {tab === 'Email Template' && <EmailTemplateTab state={state} setState={setState} />}
                 {tab === 'Google Sheet' && <GoogleSheetTab state={state} setState={setState} />}
