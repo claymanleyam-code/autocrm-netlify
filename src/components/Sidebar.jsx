@@ -1,21 +1,20 @@
-const TABS = [
-  'Dashboard', 'Leads', 'Email Template',
-  'Google Sheet', 'Attachments', 'Gmail Account', 'Settings'
-];
+import React from 'react';
 
-export default function Sidebar({ active, onChange }) {
+export default function Sidebar({ tabs, active, onSelect }) {
   return (
-    <aside className="sidebar">
-      <h1>AutoCRM</h1>
-      {TABS.map(t => (
-        <button
-          key={t}
-          className={active === t ? 'active' : ''}
-          onClick={() => onChange(t)}
-        >
-          {t}
-        </button>
-      ))}
-    </aside>
+    <nav className="sidebar">
+      <div className="sidebar-title">AutoCRM</div>
+      <ul>
+        {tabs.map((t) => (
+          <li
+            key={t.id}
+            className={'sidebar-item' + (active === t.id ? ' active' : '')}
+            onClick={() => onSelect(t.id)}
+          >
+            {t.label}
+          </li>
+        ))}
+      </ul>
+    </nav>
   );
 }
