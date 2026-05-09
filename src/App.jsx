@@ -1,98 +1,101 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import Dashboard from './components/Dashboard.jsx';
-import GoogleSheetTab from './components/GoogleSheetTab.jsx';
 import EmailTemplateTab from './components/EmailTemplateTab.jsx';
-import AttachmentsTab from './components/AttachmentsTab.jsx';
+import GoogleSheetTab from './components/GoogleSheetTab.jsx';
 import GmailAccountTab from './components/GmailAccountTab.jsx';
 import Settings from './components/Settings.jsx';
-import LeadsTable from './components/LeadsTable.jsx';
-import { mapHeaders } from './utils/sheetMapping.js';
-import { mockHeaderRow, mockRows, defaultTemplate } from './utils/mockLeads.js';
 
-const STORAGE_KEY = 'autocrm-state-v1';
+const LS = {
+  refresh: 'autocrm.refresh_token',
+  email: 'autocrm.gmail_email',
+  sheet: 'autocrm.sheet_url',
+  tmplSubject: 'autocrm.tmpl_subject',
+  tmplBody: 'autocrm.tmpl_body',
+};
 
-const initialState = (() => {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
-    const { map, missing } = mapHeaders(mockHeaderRow);
-    return saved || {
-          sheetUrl: '', sheetId: null, sheetTab: 'Sheet1',
-          docUrl: '', docId: null,
-          driveUrl: '', driveFileId: null,
-          attachmentName: '', attachmentSource: null,
-          gmailAccount: '',
-          headerMap: map,
-          missing,
-          rows: mockRows,
-          connections: {
-                  sheet: false, template: false, gmail: false,
-                  attachment: false, attachmentRequired: true
-          },
-    };
-})();
+function useLocalStorage(key, initial) {
+  const [val, setVal] = useState(() => {
+    try { const v = localStorage.getItem(key); return v == null ? initial : v; } catch { return initial; }
+  });
+  useEffect(() => {
+    try { if (val == null) localStorage.removeItem(key); else localStorage.setItem(key, val); } catch {}
+  }, [key, val]);
+  return [val, setVal];
+}
 
 export default function App() {
-    const [tab, setTab] = useState('Dashboard');
-    const [state, setState] = useState(initialState);
+  const [tab, setTab] = useState('dashboard');
+  const [refreshToken, setRefreshToken] = useLocalStorage(LS.refresh, '');
+  const [gmailEmail, setGmailEmail] = useLocalStorage(LS.email, '');
+  const [sheetUrl, setSheetUrl] = useLocalStorage(LS.sheet, '');
+  const [tmplSubject, setTmplSubject] = useLocalStorage(
+    LS.tmplSubject,
+    'Quick intro from {{first_name}}'
+  );
+  const [tmplBody, setTmplBody] = useLocalStorage(
+    LS.tmplBody,
+    'Hi {{first_name}},\n\nI was looking at {{company}} and thought we might be a good fit.\n\nWould you have 15 minutes this week for a quick chat?\n\nThanks!'
+  );
+  const [authError, setAuthError] = useState('');
 
-  // Persist state to localStorage
   useEffect(() => {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
-
-  // Handle OAuth callback — pick up tokens from URL after Google redirect
-  useEffect(() => {
-        const params = new URLSearchParams(window.location.search);
-        const accessToken = params.get('access_token');
-        const authError = params.get('auth_error');
-
-                if (authError) {
-                        alert('Google OAuth error: ' + authError);
-                        window.history.replaceState({}, '', '/');
-                        return;
-                }
-
-                if (accessToken) {
-                        const tokenData = {
-                                  access_token: accessToken,
-                                  refresh_token: params.get('refresh_token') || '',
-                                  expires_in: parseInt(params.get('expires_in') || '3600'),
-                                  token_type: params.get('token_type') || 'Bearer',
-                                  obtained_at: Date.now()
-                        };
-                        localStorage.setItem('google_tokens', JSON.stringify(tokenData));
-                        setState(s => ({
-                                  ...s,
-                                  gmailAccount: 'connected',
-                                  connections: { ...s.connections, gmail: true }
-                        }));
-                        window.history.replaceState({}, '', '/');
-                }
+    const url = new URL(window.location.href);
+    const qErr = url.searchParams.get('auth_error');
+    if (qErr) {
+      setAuthError(qErr);
+      url.searchParams.delete('auth_error');
+      window.history.replaceState({}, '', url.pathname + url.search);
+      return;
+    }
+    const hash = window.location.hash || '';
+    if (hash.startsWith('#gmail_connected')) {
+      const frag = hash.replace(/^#gmail_connected&?/, '');
+      const params = new URLSearchParams(frag);
+      const rt = params.get('refresh_token') || '';
+      const em = params.get('email') || '';
+      if (rt) setRefreshToken(rt);
+      if (em) setGmailEmail(em);
+      window.history.replaceState({}, '', url.pathname + url.search);
+    }
   }, []);
 
+  const gmailConnected = !!refreshToken;
+  const sheetConnected = !!sheetUrl;
+
+  const ctx = {
+    refreshToken, setRefreshToken,
+    gmailEmail, setGmailEmail,
+    sheetUrl, setSheetUrl,
+    tmplSubject, setTmplSubject,
+    tmplBody, setTmplBody,
+    gmailConnected, sheetConnected,
+  };
+
+  const tabs = useMemo(() => ([
+    { id: 'dashboard', label: 'Dashboard' },
+    { id: 'template', label: 'Email Template' },
+    { id: 'sheet', label: 'Google Sheet' },
+    { id: 'gmail', label: 'Gmail Account' },
+    { id: 'settings', label: 'Settings' },
+  ]), []);
+
   return (
-        <div className="app">
-              <Sidebar active={tab} onChange={setTab} />
-              <main className="main">
-                {tab === 'Dashboard' && <Dashboard state={state} setState={setState} />}
-                {tab === 'Leads' && (
-                    <>
-                                <h2>Leads</h2>
-                                <LeadsTable
-                                                rows={state.rows}
-                                                headerMap={state.headerMap}
-                                                selected={new Set()}
-                                                onToggle={() => {}}
-                                                onToggleAll={() => {}}
-                                              />
-                    </>
-                  )}
-                {tab === 'Email Template' && <EmailTemplateTab state={state} setState={setState} />}
-                {tab === 'Google Sheet' && <GoogleSheetTab state={state} setState={setState} />}
-                {tab === 'Attachments' && <AttachmentsTab state={state} setState={setState} />}
-                {tab === 'Gmail Account' && <GmailAccountTab state={state} setState={setState} />}
-                {tab === 'Settings' && <Settings state={state} setState={setState} />}
-              </main>
-        </div>
-      );
+    <div className="app-shell">
+      <Sidebar tabs={tabs} active={tab} onSelect={setTab} />
+      <main className="app-main">
+        {authError && (
+          <div className="banner banner-error">
+            Auth error: {authError}
+            <button onClick={() => setAuthError('')}>dismiss</button>
+          </div>
+        )}
+        {tab === 'dashboard' && <Dashboard ctx={ctx} />}
+        {tab === 'template' && <EmailTemplateTab ctx={ctx} />}
+        {tab === 'sheet' && <GoogleSheetTab ctx={ctx} />}
+        {tab === 'gmail' && <GmailAccountTab ctx={ctx} />}
+        {tab === 'settings' && <Settings ctx={ctx} />}
+      </main>
+    </div>
+  );
 }
