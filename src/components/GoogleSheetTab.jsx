@@ -1,54 +1,63 @@
-import { useState } from 'react';
-import { parseSheetId } from '../utils/linkParser.js';
+import React, { useState } from 'react';
 
-export default function GoogleSheetTab({ state, setState }) {
-  const [url, setUrl] = useState(state.sheetUrl || '');
-  const [tab, setTab] = useState(state.sheetTab || 'Sheet1');
+export default function GoogleSheetTab({ ctx }) {
+  const { sheetUrl, setSheetUrl, refreshToken, gmailConnected } = ctx;
+  const [draft, setDraft] = useState(sheetUrl || '');
+  const [preview, setPreview] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  function connect() {
-    const id = parseSheetId(url);
-    if (!id) return alert('Invalid Google Sheet link');
-    setState(s => ({
-      ...s,
-      sheetUrl: url,
-      sheetId: id,
-      sheetTab: tab,
-      connections: { ...s.connections, sheet: true }
-    }));
-  }
-  function disconnect() {
-    setState(s => ({
-      ...s,
-      sheetUrl: '', sheetId: null,
-      connections: { ...s.connections, sheet: false }
-    }));
-  }
+  const save = () => { setSheetUrl(draft.trim()); };
+  const clear = () => { setDraft(''); setSheetUrl(''); setPreview(null); };
+
+  const test = async () => {
+    setLoading(true); setError(''); setPreview(null);
+    try {
+      const r = await fetch('/.netlify/functions/sheets-read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken, sheet_url: draft.trim() }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      setPreview(j);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <>
-      <h2>Google Sheet</h2>
-      <p className="muted">Paste your Google Sheet link. Live API calls will be wired up in Phase 2.</p>
-      <div className="section">
-        <input className="input" placeholder="https://docs.google.com/spreadsheets/d/..." value={url} onChange={e => setUrl(e.target.value)} />
+    <div>
+      <div className="page-title">Google Sheet</div>
+      {!gmailConnected && (
+        <p style={{ color: '#a00' }}>Connect Gmail first to grant Sheets access.</p>
+      )}
+      <p>Paste the full Google Sheet URL (the one in your browser's address bar).</p>
+      <input
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder="https://docs.google.com/spreadsheets/d/..."
+        style={{ width: '100%', padding: 8, marginBottom: 12 }}
+      />
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <button onClick={save} disabled={!draft.trim()}>Save URL</button>
+        <button onClick={test} disabled={!draft.trim() || !gmailConnected || loading}>{loading ? 'Testing…' : 'Test connection'}</button>
+        <button onClick={clear}>Clear</button>
       </div>
-      <div className="section">
-        <label className="muted">Tab name </label>
-        <input className="input" style={{ maxWidth: 240 }} value={tab} onChange={e => setTab(e.target.value)} />
-      </div>
-      <button className="btn" onClick={connect}>Connect</button>
-      <button className="btn secondary" onClick={disconnect}>Disconnect</button>
-
-      {state.sheetId && (
-        <div className="section" style={{ marginTop: 16 }}>
-          <div><b>Sheet ID:</b> {state.sheetId}</div>
-          <div><b>Tab:</b> {state.sheetTab}</div>
-          <h3 style={{ marginTop: 12 }}>Column Mapping (mock data)</h3>
-          {Object.entries(state.headerMap).map(([k, v]) => (
-            <div key={k}>{k} → <b>{v?.header || '(missing)'}</b></div>
-          ))}
-          {state.missing.length > 0 && <div className="error">Missing: {state.missing.join(', ')}</div>}
+      {sheetUrl && <p style={{ color: '#070' }}>Saved sheet: {sheetUrl}</p>}
+      {error && <div className="banner banner-error">{error}</div>}
+      {preview && (
+        <div className="mapping-card">
+          <strong>Sheet: {preview.sheetTitle}</strong>
+          <p>Headers: {(preview.headers || []).join(' | ')}</p>
+          <p>Detected: first name = {preview.mapping.firstName}, email = {preview.mapping.email}, company = {preview.mapping.company}, status = {preview.mapping.status}</p>
+          <p>Rows: {preview.rows.length}</p>
+          <p>First row: {preview.rows[0] ? `${preview.rows[0].firstName} <${preview.rows[0].email}> @ ${preview.rows[0].company}` : 'none'}</p>
         </div>
       )}
-    </>
+    </div>
   );
 }
