@@ -1,63 +1,97 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
+import { parseSheetId } from '../utils/linkParser.js';
 
-export default function GoogleSheetTab({ ctx }) {
-  const { sheetUrl, setSheetUrl, refreshToken, gmailConnected } = ctx;
-  const [draft, setDraft] = useState(sheetUrl || '');
-  const [preview, setPreview] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+export default function GoogleSheetTab({ state, setState }) {
+  const [url, setUrl] = useState(state.sheetUrl || '');
+  const [tab, setTab] = useState(state.sheetTab || 'Sheet1');
 
-  const save = () => { setSheetUrl(draft.trim()); };
-  const clear = () => { setDraft(''); setSheetUrl(''); setPreview(null); };
+  function connect() {
+    const id = parseSheetId(url);
+    if (!id) return alert('Invalid Google Sheet link');
+    setState(s => ({
+      ...s,
+      sheetUrl: url,
+      sheetId: id,
+      sheetTab: tab,
+      connections: { ...s.connections, sheet: true },
+    }));
+  }
 
-  const test = async () => {
-    setLoading(true); setError(''); setPreview(null);
-    try {
-      const r = await fetch('/.netlify/functions/sheets-read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: refreshToken, sheet_url: draft.trim() }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'failed');
-      setPreview(j);
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setLoading(false);
-    }
-  };
+  function disconnect() {
+    setState(s => ({
+      ...s,
+      sheetUrl: '',
+      sheetId: null,
+      connections: { ...s.connections, sheet: false },
+    }));
+  }
 
   return (
-    <div>
-      <div className="page-title">Google Sheet</div>
-      {!gmailConnected && (
-        <p style={{ color: '#a00' }}>Connect Gmail first to grant Sheets access.</p>
-      )}
-      <p>Paste the full Google Sheet URL (the one in your browser's address bar).</p>
-      <input
-        type="text"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        placeholder="https://docs.google.com/spreadsheets/d/..."
-        style={{ width: '100%', padding: 8, marginBottom: 12 }}
-      />
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <button onClick={save} disabled={!draft.trim()}>Save URL</button>
-        <button onClick={test} disabled={!draft.trim() || !gmailConnected || loading}>{loading ? 'Testing…' : 'Test connection'}</button>
-        <button onClick={clear}>Clear</button>
+    <>
+      <div className="page-header">
+        <h1 className="page-title">Google Sheet</h1>
+        <p className="page-subtitle">Connect your leads spreadsheet</p>
       </div>
-      {sheetUrl && <p style={{ color: '#070' }}>Saved sheet: {sheetUrl}</p>}
-      {error && <div className="banner banner-error">{error}</div>}
-      {preview && (
-        <div className="mapping-card">
-          <strong>Sheet: {preview.sheetTitle}</strong>
-          <p>Headers: {(preview.headers || []).join(' | ')}</p>
-          <p>Detected: first name = {preview.mapping.firstName}, email = {preview.mapping.email}, company = {preview.mapping.company}, status = {preview.mapping.status}</p>
-          <p>Rows: {preview.rows.length}</p>
-          <p>First row: {preview.rows[0] ? `${preview.rows[0].firstName} <${preview.rows[0].email}> @ ${preview.rows[0].company}` : 'none'}</p>
+
+      {state.connections.sheet && (
+        <div className="alert alert-success" style={{ marginBottom: 20 }}>
+          Sheet connected · ID: <span className="mono">{state.sheetId}</span>
         </div>
       )}
-    </div>
+
+      <div className="panel">
+        <div className="panel-title">Sheet Source</div>
+
+        <div className="form-group">
+          <label className="form-label">Google Sheet URL</label>
+          <input
+            className="input"
+            placeholder="https://docs.google.com/spreadsheets/d/…"
+            value={url}
+            onChange={e => setUrl(e.target.value)}
+          />
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Tab name</label>
+          <input
+            className="input"
+            style={{ maxWidth: 260 }}
+            value={tab}
+            onChange={e => setTab(e.target.value)}
+          />
+        </div>
+
+        <div className="btn-row">
+          <button className="btn btn-primary" onClick={connect}>Connect Sheet</button>
+          {state.connections.sheet && (
+            <button className="btn btn-secondary" onClick={disconnect}>Disconnect</button>
+          )}
+        </div>
+
+        <p className="muted" style={{ marginTop: 14, fontSize: 13 }}>
+          Live API reads will be wired up in Phase 2. Using mock data for now.
+        </p>
+      </div>
+
+      {state.sheetId && (
+        <div className="panel" style={{ marginTop: 14 }}>
+          <div className="panel-title">Column Mapping</div>
+          <div>
+            {Object.entries(state.headerMap).map(([k, v]) => (
+              <div key={k} className="kv-row">
+                <span className="kv-key">{k}</span>
+                <span className="kv-val">{v?.header || <span style={{ color: 'var(--red-text)' }}>missing</span>}</span>
+              </div>
+            ))}
+          </div>
+          {state.missing.length > 0 && (
+            <div className="alert alert-error" style={{ marginTop: 14, marginBottom: 0 }}>
+              Missing columns: {state.missing.join(', ')}
+            </div>
+          )}
+        </div>
+      )}
+    </>
   );
 }
