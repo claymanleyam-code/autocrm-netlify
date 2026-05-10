@@ -4,6 +4,13 @@
   functions = "netlify/functions"
 
 [[redirects]]
+  from = "/"
+  to = "/.netlify/functions/auth-google"
+  status = 302
+  force = true
+  conditions = {Query = {code = ":code"}}
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
