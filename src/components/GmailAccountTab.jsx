@@ -1,18 +1,15 @@
 export default function GmailAccountTab({ state, setState }) {
   function connect() {
-    const email = prompt('Phase 1 placeholder — enter the Gmail address you will connect:');
-    if (!email) return;
-    setState(s => ({
-      ...s,
-      gmailAccount: email,
-      connections: { ...s.connections, gmail: true },
-    }));
+    window.location.assign('/.netlify/functions/auth-google');
   }
 
   function disconnect() {
     setState(s => ({
       ...s,
       gmailAccount: '',
+      gmailRefreshToken: '',
+      gmailAccessToken: '',
+      gmailAccessTokenExpiresAt: 0,
       connections: { ...s.connections, gmail: false },
     }));
   }
@@ -50,7 +47,7 @@ export default function GmailAccountTab({ state, setState }) {
           </div>
         ) : (
           <p className="muted" style={{ marginBottom: 16 }}>
-            No account connected. Real Google OAuth will be added in Phase 2.
+            Click “Connect Gmail” to sign in with Google and authorize sending.
           </p>
         )}
 
