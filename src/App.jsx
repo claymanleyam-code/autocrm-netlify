@@ -21,6 +21,9 @@ const initialState = (() => {
     driveUrl: '', driveFileId: null,
     attachmentName: '', attachmentSource: null,
     gmailAccount: '',
+    gmailRefreshToken: '',
+    gmailAccessToken: '',
+    gmailAccessTokenExpiresAt: 0,
     template: defaultTemplate,
     headerRow: mockHeaderRow,
     headerMap: map,
@@ -36,6 +39,32 @@ const initialState = (() => {
 export default function App() {
   const [tab, setTab] = useState('Dashboard');
   const [state, setState] = useState(initialState);
+
+  // Handle Google OAuth callback: auth-google.js redirects to
+  // /#gmail_connected&refresh_token=...&access_token=...&expires_in=...&email=...
+  useEffect(() => {
+    const hash = window.location.hash || '';
+    if (!hash.startsWith('#gmail_connected')) return;
+    const qs = hash.replace(/^#gmail_connected&?/, '');
+    const params = new URLSearchParams(qs);
+    const refresh_token = params.get('refresh_token') || '';
+    const access_token = params.get('access_token') || '';
+    const expires_in = parseInt(params.get('expires_in') || '3600', 10);
+    const email = params.get('email') || '';
+    if (refresh_token || access_token) {
+      setState(s => ({
+        ...s,
+        gmailAccount: email,
+        gmailRefreshToken: refresh_token,
+        gmailAccessToken: access_token,
+        gmailAccessTokenExpiresAt: Date.now() + expires_in * 1000,
+        connections: { ...s.connections, gmail: true },
+      }));
+      setTab('Gmail Account');
+    }
+    // Clean the URL so tokens don't linger in the address bar / history.
+    history.replaceState(null, '', window.location.pathname);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
