@@ -9,9 +9,9 @@ const ALIASES = {
   email: ['email address', 'contact email', 'email', 'e-mail', 'mail', 'emails'],
   company: [
     'company name', 'company',
-    'account name', 'account',
+    'store', 'stores', 'retailer', 'chain', 'group',
     'organization', 'org', 'business', 'employer',
-    'store', 'stores', 'retailer', 'chain', 'group'
+    'account name', 'account'
   ],
   status: ['lead status', 'email status', 'outreach status', 'pipeline', 'stage', 'state', 'status']
 };
@@ -41,19 +41,24 @@ export function mapHeaders(headerRow = []) {
     const idx = findColumn(lower, aliases);
     map[field] = idx >= 0 ? { index: idx, header: headerRow[idx] } : null;
   }
-  // Fallbacks: if company still missing, use the first column (usually the store/account label).
+  // Fallback: if company still missing, use the first column (usually the store/account label).
   if (!map.company && headerRow.length > 0) {
+    const taken = new Set(
+      [map.first_name?.index, map.email?.index, map.status?.index]
+        .filter(v => v !== undefined && v !== null)
+    );
     let fallbackIdx = 0;
-    // Avoid collision with first_name/email columns
-    const taken = new Set([map.first_name?.index, map.email?.index, map.status?.index].filter(v => v !== undefined && v !== null));
     while (taken.has(fallbackIdx) && fallbackIdx < headerRow.length) fallbackIdx++;
     if (fallbackIdx < headerRow.length) {
       map.company = { index: fallbackIdx, header: headerRow[fallbackIdx] };
     }
   }
-  // Fallback for first_name: if missing, look for any header containing 'name' that isn't already mapped.
+  // Fallback for first_name: any header containing 'name' that isn't already mapped.
   if (!map.first_name) {
-    const taken = new Set([map.company?.index, map.email?.index, map.status?.index].filter(v => v !== undefined && v !== null));
+    const taken = new Set(
+      [map.company?.index, map.email?.index, map.status?.index]
+        .filter(v => v !== undefined && v !== null)
+    );
     const idx = lower.findIndex((h, i) => h && h.includes('name') && !taken.has(i));
     if (idx >= 0) map.first_name = { index: idx, header: headerRow[idx] };
   }
