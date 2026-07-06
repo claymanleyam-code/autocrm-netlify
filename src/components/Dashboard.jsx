@@ -1,22 +1,26 @@
 import { useMemo, useState } from 'react';
-import LeadsTable from './LeadsTable.jsx';
-import EmailPreview from './EmailPreview.jsx';
-import { extractEmails } from '../utils/emailParser.js';
-import { applyTemplate, buildSubject } from '../utils/templateCleaner.js';
 
-const FIRST_EMAIL_SENT = 'First Email Sent';
-const LAST_SENT_COL_INDEX = 4; // legacy: column E
-const ERROR_COL_INDEX = 5;     // legacy: column F
+const BATCH_SIZE = 200;
 
-function colLetter(index) {
-  let n = index + 1;
-  let s = '';
-  while (n > 0) {
-    const r = (n - 1) % 26;
-    s = String.fromCharCode(65 + r) + s;
-    n = Math.floor((n - 1) / 26);
+function parseEmailList(text) {
+  const re = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+  const matches = String(text || '').match(re) || [];
+  const seen = new Set();
+  const out = [];
+  for (const m of matches) {
+    const norm = m.trim().toLowerCase();
+    if (!seen.has(norm)) {
+      seen.add(norm);
+      out.push(norm);
+    }
   }
-  return s;
+  return out;
+}
+
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
 
 const SendIcon = () => (
@@ -26,172 +30,90 @@ const SendIcon = () => (
 );
 
 export default function Dashboard({ state, setState }) {
-  const { rows, headerMap, template, connections } = state;
-  const [selected, setSelected] = useState(new Set());
+  const { connections } = state;
+  const [recipientsText, setRecipientsText] = useState(state.pastedEmails || '');
+  const [subject, setSubjectLocal] = useState(state.subject || '');
   const [log, setLog] = useState([]);
   const [sending, setSending] = useState(false);
+  const [progress, setProgress] = useState({ sent: 0, failed: 0 });
 
-  const ready = rows.filter(r =>
-    (r[headerMap.status?.index] || '').toLowerCase() !== 'first email sent'
-  ).length;
+  const recipients = useMemo(() => parseEmailList(recipientsText), [recipientsText]);
 
-  const sentToday = rows.filter(r => {
-    const last = r[LAST_SENT_COL_INDEX];
-    if (!last) return false;
-    return new Date(last).toDateString() === new Date().toDateString();
-  }).length;
+  function saveRecipients() {
+    setState(s => ({ ...s, pastedEmails: recipientsText }));
+  }
 
-  const errors = rows.filter(r => (r[ERROR_COL_INDEX] || '').trim() !== '').length;
+  function saveSubject() {
+    setState(s => ({ ...s, subject }));
+  }
 
   const canSend =
-    connections.gmail && connections.sheet && connections.template &&
-    (!connections.attachmentRequired || connections.attachment) &&
-    !state.missing.length;
+    connections.gmail &&
+    !!state.template &&
+    !!subject &&
+    recipients.length > 0;
 
-  function toggle(i) {
-    const next = new Set(selected);
-    next.has(i) ? next.delete(i) : next.add(i);
-    setSelected(next);
-  }
-
-  function toggleAll() {
-    setSelected(selected.size === rows.length ? new Set() : new Set(rows.map((_, i) => i)));
-  }
-
-  // Build the per-row payload used by both dry run and real send.
-  function buildSend(i) {
-    const r = rows[i];
-    const first = r[headerMap.first_name?.index] || '';
-    const company = r[headerMap.company?.index] || '';
-    const emails = extractEmails(r[headerMap.email?.index] || '');
-    const subject = buildSubject(company);
-    const body = applyTemplate(template, { first_name: first, company });
-    return { first, company, emails, subject, body };
-  }
-
-  function dryRun(targetIdxs) {
-    const out = [];
-    out.push(`DRY RUN · ${new Date().toISOString()}`);
-    out.push(`Attachment: ${connections.attachment ? '[sell-sheet.pdf]' : '(none)'}\n`);
-    const updatedRows = rows.map(r => [...r]);
-    let sentCount = 0;
-    targetIdxs.forEach(i => {
-      const r = updatedRows[i];
-      const status = (r[headerMap.status?.index] || '').toLowerCase();
-      if (status === 'first email sent') {
-        out.push(`Row ${i + 1}: already sent, skipping`);
-        return;
-      }
-      const { first, company, emails, subject, body } = buildSend(i);
-      if (!emails.length) {
-        out.push(`Row ${i + 1} (${first} @ ${company}): no valid email, skipping`);
-        return;
-      }
-      out.push(`Row ${i + 1} (${first} @ ${company}):`);
-      out.push(`  to:      ${emails.join(', ')}`);
-      out.push(`  subject: ${subject}`);
-      out.push(`  body:    ${body.slice(0, 80).replace(/\n/g, ' ')}…`);
-      r[headerMap.status?.index] = FIRST_EMAIL_SENT;
-      r[LAST_SENT_COL_INDEX] = new Date().toISOString().slice(0, 10);
-      r[ERROR_COL_INDEX] = '';
-      sentCount++;
-    });
-    out.push(`\nDone — ${sentCount} row(s) marked "${FIRST_EMAIL_SENT}".`);
-    setLog(out);
-    setState(s => ({ ...s, rows: updatedRows }));
-    setSelected(new Set());
-  }
-
-  // Real send via /.netlify/functions/send-email. On success, the function
-  // also writes 'First Email Sent' into the Google Sheet status cell.
-  async function realSend(targetIdxs) {
+  async function sendAll() {
     if (sending) return;
+    setState(s => ({ ...s, pastedEmails: recipientsText, subject }));
     setSending(true);
-    const out = [`SEND · ${new Date().toISOString()}`];
-    const updatedRows = rows.map(r => [...r]);
-    const statusColLetter = headerMap.status ? colLetter(headerMap.status.index) : '';
-    const lastSentColLetter = colLetter(LAST_SENT_COL_INDEX);
-    const errorColLetter = colLetter(ERROR_COL_INDEX);
+    setProgress({ sent: 0, failed: 0 });
+    const out = [
+      `SEND · ${new Date().toISOString()}`,
+      `Recipients: ${recipients.length}`,
+      `Attachment: ${state.attachmentName || '(none)'}`,
+      '',
+    ];
+    setLog([...out]);
+
+    const batches = chunk(recipients, BATCH_SIZE);
     let sentCount = 0;
     let failCount = 0;
+    const attachment = state.attachmentData
+      ? { filename: state.attachmentName, mimeType: state.attachmentMimeType, data: state.attachmentData }
+      : undefined;
 
-    for (const i of targetIdxs) {
-      const r = updatedRows[i];
-      const status = (r[headerMap.status?.index] || '').toLowerCase();
-      if (status === 'first email sent') {
-        out.push(`Row ${i + 1}: already sent, skipping`);
-        continue;
-      }
-      const { first, company, emails, subject, body } = buildSend(i);
-      if (!emails.length) {
-        out.push(`Row ${i + 1} (${first} @ ${company}): no valid email, skipping`);
-        continue;
-      }
-      try {
-        const res = await fetch('/.netlify/functions/send-email', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            refresh_token: state.gmailRefreshToken,
-            from_email: state.gmailAccount,
-            to: emails[0],
-            subject,
-            body,
-            sheet_url: state.sheetUrl,
-            sheet_title: state.sheetTab || 'Sheet1',
-            status_col_letter: statusColLetter,
-            last_sent_col_letter: lastSentColLetter,
-            error_col_letter: errorColLetter,
-            row_number: i + 2, // +1 for 0-based, +1 for header row
-          }),
-        });
-        const j = await res.json();
-        if (!res.ok) {
-          out.push(`Row ${i + 1}: ERROR — ${j.error || res.status}`);
-          r[ERROR_COL_INDEX] = j.error || ('http ' + res.status);
+    for (let b = 0; b < batches.length; b++) {
+      out.push(`--- Batch ${b + 1}/${batches.length} (${batches[b].length} emails) ---`);
+      setLog([...out]);
+      for (const to of batches[b]) {
+        try {
+          const res = await fetch('/.netlify/functions/send-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              refresh_token: state.gmailRefreshToken,
+              from_email: state.gmailAccount,
+              to,
+              subject,
+              body: state.template,
+              attachment,
+            }),
+          });
+          const j = await res.json();
+          if (!res.ok) {
+            out.push(`  ${to}: ERROR — ${j.error || res.status}`);
+            failCount++;
+          } else {
+            out.push(`  ${to}: sent`);
+            sentCount++;
+          }
+        } catch (e) {
+          out.push(`  ${to}: NETWORK ERROR — ${e.message}`);
           failCount++;
-          continue;
         }
-        out.push(`Row ${i + 1} (${first} @ ${company}): sent → ${emails[0]}`);
-        r[headerMap.status?.index] = FIRST_EMAIL_SENT;
-        r[LAST_SENT_COL_INDEX] = (j.sent_at || new Date().toISOString()).slice(0, 10);
-        r[ERROR_COL_INDEX] = '';
-        sentCount++;
-      } catch (e) {
-        out.push(`Row ${i + 1}: NETWORK ERROR — ${e.message}`);
-        r[ERROR_COL_INDEX] = e.message;
-        failCount++;
+        setProgress({ sent: sentCount, failed: failCount });
+        setLog([...out]);
       }
     }
-
-    out.push(`\nDone — ${sentCount} sent, ${failCount} failed.`);
+    out.push('');
+    out.push(`Done — ${sentCount} sent, ${failCount} failed.`);
     setLog(out);
-    setState(s => ({ ...s, rows: updatedRows }));
-    setSelected(new Set());
     setSending(false);
   }
 
-  function onSendClick(idxs) {
-    // If Gmail isn't really connected, fall back to dry run so the demo still works.
-    if (connections.gmail && state.gmailRefreshToken && state.sheetUrl) {
-      realSend(idxs);
-    } else {
-      dryRun(idxs);
-    }
-  }
-
-  const targets = useMemo(() => {
-    if (selected.size > 0) return [...selected];
-    return rows.map((_, i) => i).filter(i =>
-      (rows[i][headerMap.status?.index] || '').toLowerCase() !== 'first email sent'
-    );
-  }, [selected, rows, headerMap]);
-
-  const previewRow = rows[[...selected][0] ?? 0];
-
   const connItems = [
-    { label: 'Google Sheet', ok: connections.sheet },
-    { label: 'Template', ok: connections.template },
+    { label: 'Template', ok: !!state.template },
     { label: 'Gmail', ok: connections.gmail },
     { label: 'Attachment', ok: connections.attachment },
   ];
@@ -200,21 +122,21 @@ export default function Dashboard({ state, setState }) {
     <>
       <div className="page-header">
         <h1 className="page-title">Dashboard</h1>
-        <p className="page-subtitle">{ready} lead{ready === 1 ? '' : 's'} ready to send</p>
+        <p className="page-subtitle">Paste recipients, confirm your template, and send in batches of {BATCH_SIZE}</p>
       </div>
 
       <div className="stats-row">
         <div className="stat-card">
-          <div className="stat-label">Ready to send</div>
-          <div className="stat-value">{ready}</div>
+          <div className="stat-label">Recipients Pasted</div>
+          <div className="stat-value">{recipients.length}</div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">Sent Today</div>
-          <div className={`stat-value${sentToday > 0 ? ' success' : ''}`}>{sentToday}</div>
+          <div className="stat-label">Sent</div>
+          <div className={`stat-value${progress.sent > 0 ? ' success' : ''}`}>{progress.sent}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Errors</div>
-          <div className={`stat-value${errors > 0 ? ' danger' : ''}`}>{errors}</div>
+          <div className={`stat-value${progress.failed > 0 ? ' danger' : ''}`}>{progress.failed}</div>
         </div>
       </div>
 
@@ -227,45 +149,52 @@ export default function Dashboard({ state, setState }) {
         ))}
       </div>
 
-      {state.missing.length > 0 && (
-        <div className="alert alert-error">
-          Missing required Sheet column(s): {state.missing.join(', ')}
-        </div>
-      )}
+      <div className="panel" style={{ marginTop: 14 }}>
+        <div className="panel-title">Recipients</div>
+        <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
+          Copy a column of email addresses from your Google Sheet and paste it below (one per line, or separated by commas/spaces).
+        </p>
+        <textarea
+          className="input"
+          rows={8}
+          style={{ maxWidth: '100%' }}
+          placeholder={'jane@example.com\njohn@example.com\n...'}
+          value={recipientsText}
+          onChange={e => setRecipientsText(e.target.value)}
+          onBlur={saveRecipients}
+        />
+        <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>{recipients.length} valid address{recipients.length === 1 ? '' : 'es'} detected</p>
+      </div>
+
+      <div className="panel" style={{ marginTop: 14 }}>
+        <div className="panel-title">Subject</div>
+        <input
+          className="input"
+          placeholder="Subject line for every email"
+          value={subject}
+          onChange={e => setSubjectLocal(e.target.value)}
+          onBlur={saveSubject}
+        />
+        <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>
+          Body comes from the <strong>Email Template</strong> tab — every recipient gets the exact same subject, body, and attachment.
+        </p>
+      </div>
 
       <div className="actions-bar">
         <button
           className="btn btn-primary"
-          disabled={!canSend || selected.size === 0 || sending}
-          onClick={() => onSendClick([...selected])}
+          disabled={!canSend || sending}
+          onClick={sendAll}
         >
           <SendIcon />
-          {sending ? 'Sending…' : 'Send Selected'}
-        </button>
-        <button
-          className="btn btn-secondary"
-          disabled={!canSend || sending}
-          onClick={() => onSendClick(targets)}
-        >
-          {sending ? 'Sending…' : 'Send All Ready'}
+          {sending ? `Sending… (${progress.sent + progress.failed}/${recipients.length})` : `Send to ${recipients.length} recipient${recipients.length === 1 ? '' : 's'}`}
         </button>
         {!canSend && (
           <span style={{ fontSize: 13, color: 'var(--g3)' }}>
-            Connect all required pieces to enable sending
+            Connect Gmail, write a template, set a subject, and paste at least one email to enable sending
           </span>
         )}
       </div>
-
-      <LeadsTable
-        rows={rows}
-        headerMap={headerMap}
-        selected={selected}
-        onToggle={toggle}
-        onToggleAll={toggleAll}
-      />
-
-      <h2 className="section-title" style={{ marginTop: 28 }}>Email Preview</h2>
-      <EmailPreview row={previewRow} headerMap={headerMap} template={template} />
 
       {log.length > 0 && (
         <>
