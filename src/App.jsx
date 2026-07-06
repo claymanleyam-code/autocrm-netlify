@@ -9,6 +9,7 @@ import Settings from './components/Settings.jsx';
 import LeadsTable from './components/LeadsTable.jsx';
 import { mapHeaders } from './utils/sheetMapping.js';
 import { mockHeaderRow, mockRows, defaultTemplate } from './utils/mockLeads.js';
+import { parseEmailList, dedupeEmails } from './utils/emailListParser.js';
 
 const STORAGE_KEY = 'autocrm-state-v1';
 
@@ -20,6 +21,8 @@ const initialState = (() => {
     docUrl: '', docId: null,
     driveUrl: '', driveFileId: null,
     attachmentName: '', attachmentSource: null,
+    pastedEmails: '', fileEmails: [], fileEmailsSource: '',
+    subject: '',
     gmailAccount: '',
     gmailRefreshToken: '',
     gmailAccessToken: '',
@@ -70,6 +73,11 @@ export default function App() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state]);
 
+  const leadEmails = dedupeEmails([
+    ...parseEmailList(state.pastedEmails),
+    ...(state.fileEmails || []),
+  ]);
+
   return (
     <div className="app">
       <Sidebar active={tab} onChange={setTab} />
@@ -79,15 +87,9 @@ export default function App() {
           <>
             <div className="page-header">
               <h1 className="page-title">Leads</h1>
-              <p className="page-subtitle">{state.rows.length} total leads</p>
+              <p className="page-subtitle">{leadEmails.length} total recipient{leadEmails.length === 1 ? '' : 's'}</p>
             </div>
-            <LeadsTable
-              rows={state.rows}
-              headerMap={state.headerMap}
-              selected={new Set()}
-              onToggle={() => {}}
-              onToggleAll={() => {}}
-            />
+            <LeadsTable emails={leadEmails} />
           </>
         )}
         {tab === 'Email Template' && <EmailTemplateTab state={state} setState={setState} />}
