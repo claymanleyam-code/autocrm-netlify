@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { parseDriveFileId } from '../utils/linkParser.js';
 
 const PaperclipIcon = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -14,45 +13,58 @@ const UploadIcon = () => (
   </svg>
 );
 
-export default function AttachmentsTab({ state, setState }) {
-  const [url, setUrl] = useState(state.driveUrl || '');
-  const [fileName, setFileName] = useState(state.attachmentName || '');
+const MAX_BYTES = 20 * 1024 * 1024;
 
-  function onFile(e) {
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const base64 = result.split(',')[1] || '';
+      resolve(base64);
+    };
+    reader.onerror = () => reject(new Error('file read failed'));
+    reader.readAsDataURL(file);
+  });
+}
+
+export default function AttachmentsTab({ state, setState }) {
+  const [fileName, setFileName] = useState(state.attachmentName || '');
+  const [error, setError] = useState('');
+
+  async function onFile(e) {
     const f = e.target.files?.[0];
     if (!f) return;
-    setFileName(f.name);
-    setState(s => ({
-      ...s,
-      attachmentName: f.name,
-      attachmentSource: 'upload',
-      connections: { ...s.connections, attachment: true },
-    }));
-  }
-
-  function connectDrive() {
-    const id = parseDriveFileId(url);
-    if (!id) return alert('Invalid Google Drive link');
-    setState(s => ({
-      ...s,
-      driveUrl: url,
-      driveFileId: id,
-      attachmentName: 'drive-file.pdf',
-      attachmentSource: 'drive',
-      connections: { ...s.connections, attachment: true },
-    }));
-    setFileName('drive-file.pdf');
+    if (f.size > MAX_BYTES) {
+      setError('That file is too large (max 20MB, Gmail attachment limit).');
+      return;
+    }
+    setError('');
+    try {
+      const base64 = await readFileAsBase64(f);
+      setFileName(f.name);
+      setState(s => ({
+        ...s,
+        attachmentName: f.name,
+        attachmentMimeType: f.type || 'application/octet-stream',
+        attachmentData: base64,
+        attachmentSource: 'upload',
+        connections: { ...s.connections, attachment: true },
+      }));
+    } catch (err) {
+      setError('Could not read that file: ' + err.message);
+    }
   }
 
   function clear() {
     setFileName('');
-    setUrl('');
+    setError('');
     setState(s => ({
       ...s,
       attachmentName: '',
+      attachmentMimeType: '',
+      attachmentData: '',
       attachmentSource: null,
-      driveUrl: '',
-      driveFileId: null,
       connections: { ...s.connections, attachment: false },
     }));
   }
@@ -60,8 +72,8 @@ export default function AttachmentsTab({ state, setState }) {
   return (
     <>
       <div className="page-header">
-        <h1 className="page-title">Attachments</h1>
-        <p className="page-subtitle">Add a PDF to include with every email</p>
+        <h1 className="page-title">Attachment</h1>
+        <p className="page-subtitle">Add one file to include with every email in the batch</p>
       </div>
 
       {fileName && (
@@ -76,35 +88,22 @@ export default function AttachmentsTab({ state, setState }) {
         </div>
       )}
 
+      {error && (
+        <div className="alert alert-error" style={{ marginBottom: 20 }}>{error}</div>
+      )}
+
       <div className="panel">
-        <div className="panel-title">Upload PDF</div>
+        <div className="panel-title">Upload File</div>
         <div className="upload-zone">
-          <input type="file" accept="application/pdf" onChange={onFile} />
+          <input type="file" onChange={onFile} />
           <UploadIcon />
           <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--g2)' }}>
-            Click to upload a PDF
+            Click to upload a file
           </div>
-          <div className="upload-hint">or drag and drop · PDF only</div>
+          <div className="upload-hint">or drag and drop · any file type · max 20MB</div>
         </div>
-      </div>
-
-      <div className="panel" style={{ marginTop: 14 }}>
-        <div className="panel-title">Google Drive File</div>
-
-        <div className="form-group">
-          <label className="form-label">Drive file URL</label>
-          <input
-            className="input"
-            placeholder="https://drive.google.com/file/d/…"
-            value={url}
-            onChange={e => setUrl(e.target.value)}
-          />
-        </div>
-
-        <button className="btn btn-primary" onClick={connectDrive}>Connect Drive File</button>
-
         <p className="muted" style={{ marginTop: 12, fontSize: 13 }}>
-          Actual attachment delivery will be wired up in Phase 2.
+          This file is base64-encoded and sent as a real attachment on every email in the batch.
         </p>
       </div>
     </>
