@@ -36,7 +36,7 @@ function buildRfc822({ from, to, subject, body, attachment }) {
   if (!attachment || !attachment.data) {
         return [
                 ...headerLines,
-                'Content-Type: text/plain; charset="UTF-8"',
+                'Content-Type: text/html; charset="UTF-8"',
                 '',
                 body || '',
               ].join('\r\n');
@@ -51,7 +51,7 @@ function buildRfc822({ from, to, subject, body, attachment }) {
         `Content-Type: multipart/mixed; boundary="${boundary}"`,
         '',
         `--${boundary}`,
-        'Content-Type: text/plain; charset="UTF-8"',
+        'Content-Type: text/html; charset="UTF-8"',
         '',
         body || '',
         '',
