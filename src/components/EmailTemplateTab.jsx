@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { parseDocId } from '../utils/linkParser.js';
+import RichTextEditor from './RichTextEditor';
 
 export default function EmailTemplateTab({ state, setState }) {
   const [url, setUrl] = useState(state.docUrl || '');
@@ -64,13 +65,10 @@ export default function EmailTemplateTab({ state, setState }) {
           Use <span className="mono">{'{{first_name}}'}</span> and <span className="mono">{'{{company}}'}</span> as merge fields.
         </p>
 
-        <textarea
-          className="input"
-          rows={12}
-          style={{ maxWidth: '100%' }}
-          value={text}
-          onChange={e => { setText(e.target.value); setSaved(false); }}
-        />
+        <RichTextEditor
+                    value={text}
+                    onChange={html => { setText(html); setSaved(false); }}
+                  />
 
         <div className="btn-row" style={{ marginTop: 12 }}>
           <button className="btn btn-primary" onClick={saveTemplate}>
