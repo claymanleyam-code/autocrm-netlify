@@ -1,5 +1,5 @@
 import { extractEmails } from '../utils/emailParser.js';
-import { applyTemplate, toMinimalHtml, buildSubject } from '../utils/templateCleaner.js';
+import { applyTemplate, buildSubject } from '../utils/templateCleaner.js';
 
 export default function EmailPreview({ row, headerMap, template }) {
   if (!row || !headerMap?.first_name) {
@@ -14,7 +14,7 @@ export default function EmailPreview({ row, headerMap, template }) {
   const company = row[headerMap.company.index] || '';
   const emails  = extractEmails(row[headerMap.email.index] || '');
   const body    = applyTemplate(template, { first_name: first, company });
-  const html    = toMinimalHtml(body);
+      const html    = body; // template body is already sanitized HTML from the rich text editor
 
   return (
     <div className="panel">
