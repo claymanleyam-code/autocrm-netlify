@@ -1,21 +1,8 @@
 import { useMemo, useState } from 'react';
+import { parseEmailList, dedupeEmails } from '../utils/emailListParser.js';
+import { extractEmailsFromFile } from '../utils/fileEmailExtractor.js';
 
 const BATCH_SIZE = 200;
-
-function parseEmailList(text) {
-  const re = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-  const matches = String(text || '').match(re) || [];
-  const seen = new Set();
-  const out = [];
-  for (const m of matches) {
-    const norm = m.trim().toLowerCase();
-    if (!seen.has(norm)) {
-      seen.add(norm);
-      out.push(norm);
-    }
-  }
-  return out;
-}
 
 function chunk(arr, size) {
   const out = [];
@@ -36,8 +23,15 @@ export default function Dashboard({ state, setState }) {
   const [log, setLog] = useState([]);
   const [sending, setSending] = useState(false);
   const [progress, setProgress] = useState({ sent: 0, failed: 0 });
+  const [fileBusy, setFileBusy] = useState(false);
+  const [fileError, setFileError] = useState('');
 
-  const recipients = useMemo(() => parseEmailList(recipientsText), [recipientsText]);
+  const fileEmails = state.fileEmails || [];
+
+  const recipients = useMemo(
+    () => dedupeEmails([...parseEmailList(recipientsText), ...fileEmails]),
+    [recipientsText, fileEmails]
+  );
 
   function saveRecipients() {
     setState(s => ({ ...s, pastedEmails: recipientsText }));
@@ -45,6 +39,34 @@ export default function Dashboard({ state, setState }) {
 
   function saveSubject() {
     setState(s => ({ ...s, subject }));
+  }
+
+  async function onUploadFile(e) {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    setFileError('');
+    setFileBusy(true);
+    try {
+      const emails = await extractEmailsFromFile(f);
+      if (!emails.length) {
+        setFileError(`No email addresses found in "${f.name}".`);
+      }
+      setState(s => ({
+        ...s,
+        fileEmails: dedupeEmails([...(s.fileEmails || []), ...emails]),
+        fileEmailsSource: f.name,
+      }));
+    } catch (err) {
+      setFileError(`Could not read "${f.name}": ` + err.message);
+    } finally {
+      setFileBusy(false);
+    }
+  }
+
+  function clearFileEmails() {
+    setFileError('');
+    setState(s => ({ ...s, fileEmails: [], fileEmailsSource: '' }));
   }
 
   const canSend =
@@ -122,12 +144,12 @@ export default function Dashboard({ state, setState }) {
     <>
       <div className="page-header">
         <h1 className="page-title">Dashboard</h1>
-        <p className="page-subtitle">Paste recipients, confirm your template, and send in batches of {BATCH_SIZE}</p>
+        <p className="page-subtitle">Paste or upload recipients, confirm your template, and send in batches of {BATCH_SIZE}</p>
       </div>
 
       <div className="stats-row">
         <div className="stat-card">
-          <div className="stat-label">Recipients Pasted</div>
+          <div className="stat-label">Recipients</div>
           <div className="stat-value">{recipients.length}</div>
         </div>
         <div className="stat-card">
@@ -152,18 +174,41 @@ export default function Dashboard({ state, setState }) {
       <div className="panel" style={{ marginTop: 14 }}>
         <div className="panel-title">Recipients</div>
         <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
-          Copy a column of email addresses from your Google Sheet and paste it below (one per line, or separated by commas/spaces).
+          Paste email addresses below, and/or upload an Excel/CSV sheet or a PDF — every address found is merged into one list.
         </p>
         <textarea
           className="input"
-          rows={8}
+          rows={6}
           style={{ maxWidth: '100%' }}
           placeholder={'jane@example.com\njohn@example.com\n...'}
           value={recipientsText}
           onChange={e => setRecipientsText(e.target.value)}
           onBlur={saveRecipients}
         />
-        <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>{recipients.length} valid address{recipients.length === 1 ? '' : 'es'} detected</p>
+
+        <div className="upload-zone" style={{ marginTop: 14 }}>
+          <input type="file" accept=".xlsx,.xls,.csv,.pdf,application/pdf" onChange={onUploadFile} disabled={fileBusy} />
+          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--g2)' }}>
+            {fileBusy ? 'Reading file…' : 'Click to upload an Excel/CSV sheet or PDF'}
+          </div>
+          <div className="upload-hint">emails are extracted automatically · .xlsx · .xls · .csv · .pdf</div>
+        </div>
+
+        {state.fileEmailsSource && (
+          <div className="alert alert-success" style={{ marginTop: 12 }}>
+            <span style={{ flex: 1 }}>
+              <strong>{state.fileEmailsSource}</strong> — {fileEmails.length} address{fileEmails.length === 1 ? '' : 'es'} extracted
+            </span>
+            <button className="btn btn-secondary" style={{ padding: '3px 10px', fontSize: 12 }} onClick={clearFileEmails}>
+              Clear
+            </button>
+          </div>
+        )}
+        {fileError && (
+          <div className="alert alert-error" style={{ marginTop: 12 }}>{fileError}</div>
+        )}
+
+        <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>{recipients.length} total valid address{recipients.length === 1 ? '' : 'es'} ready to send</p>
       </div>
 
       <div className="panel" style={{ marginTop: 14 }}>
@@ -191,7 +236,7 @@ export default function Dashboard({ state, setState }) {
         </button>
         {!canSend && (
           <span style={{ fontSize: 13, color: 'var(--g3)' }}>
-            Connect Gmail, write a template, set a subject, and paste at least one email to enable sending
+            Connect Gmail, write a template, set a subject, and add at least one email to enable sending
           </span>
         )}
       </div>
